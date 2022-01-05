@@ -6,36 +6,48 @@ to predict the part of speech sequence for a given sentence.
 (Adapted from Nathan Schneider)
 
 """
+import copy
 
+import math
 import torch
 import torch.nn as nn
 from torchtext import data
 import torch.optim as optim
 from math import log, isfinite
 from collections import Counter
-
-import sys, os, time, platform, nltk, random
+import sys
+import os
+import time
+import platform
+import nltk
+import random
+import pandas as pd
+import numpy as np
+import matplotlib as plt
+import seaborn as sns
 
 # With this line you don't need to worry about the HW  -- GPU or CPU
 # GPU cuda cores will be used if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 # You can call use_seed with other seeds or None (for complete randomization)
 # but DO NOT change the default value.
-def use_seed(seed = 2512021):
+def use_seed(seed=2512021):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.set_deterministic(True)
-    #torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.deterministic = True
+
 
 # utility functions to read the corpus
-def who_am_i(): #this is not a class method
+def who_am_i():  # this is not a class method
     """Returns a dictionary with your name, id number and email. keys=['name', 'id','email']
         Make sure you return your own info!
     """
-    #TODO edit the dictionary to have your own details
-    return {'name': 'John Doe', 'id': '012345678', 'email': 'jdoe@post.bgu.ac.il'}
+    # TODO edit the dictionary to have your own details
+    return {'name': 'Eyal Ginosar', 'id': '307830901', 'email': 'eyalgi@post.bgu.ac.il'}
 
 
 def read_annotated_sentence(f):
@@ -46,11 +58,15 @@ def read_annotated_sentence(f):
     while line and (line != "\n"):
         line = line.strip()
         word, tag = line.split("\t", 2)
-        sentence.append( (word, tag) )
+        sentence.append((word, tag))
         line = f.readline()
     return sentence
 
+
 def load_annotated_corpus(filename):
+    """ Returns a list of lists where each list represents a sentence
+        where every item in the list is a tuple of word and POS tag
+    """
     sentences = []
     with open(filename, 'r', encoding='utf-8') as f:
         sentence = read_annotated_sentence(f)
@@ -60,40 +76,100 @@ def load_annotated_corpus(filename):
     return sentences
 
 
-  START = "<DUMMY_START_TAG>"
-  END = "<DUMMY_END_TAG>"
-  UNK = "<UNKNOWN>"
+# ===========================================
+#       Load data
+# ===========================================
+train_dataset = load_annotated_corpus('en-ud-train.upos.tsv')
+test_dataset = load_annotated_corpus('en-ud-dev.upos.tsv')
 
-  allTagCounts = Counter()
-  # use Counters inside these
-  perWordTagCounts = {}
-  transitionCounts = {}
-  emissionCounts = {}
-  # log probability distributions: do NOT use Counters inside these because
-  # missing Counter entries default to 0, not log(0)
-  A = {} #transisions probabilities
-  B = {} #emmissions probabilities
+# ===========================================
+# ------------------------------------------
+# ===========================================
 
-  def learn_params(tagged_sentences):
-      """Populates and returns the allTagCounts, perWordTagCounts, transitionCounts,
-       and emissionCounts data-structures.
-      allTagCounts and perWordTagCounts should be used for baseline tagging and
-      should not include pseudocounts, dummy tags and unknowns.
-      The transisionCounts and emmisionCounts
-      should be computed with pseudo tags and shoud be smoothed.
-      A and B should be the log-probability of the normalized counts, based on
-      transisionCounts and  emmisionCounts
+START = "<DUMMY_START_TAG>"
+END = "<DUMMY_END_TAG>"
+UNK = "<UNKNOWN>"
 
-      Args:
-        tagged_sentences: a list of tagged sentences, each tagged sentence is a
-         list of pairs (w,t), as retunred by load_annotated_corpus().
+allTagCounts = Counter()
+# use Counters inside these
+perWordTagCounts = {}
+transitionCounts = {}
+emissionCounts = {}
+# log probability distributions: do NOT use Counters inside these because
+# missing Counter entries default to 0, not log(0)
+A = {}  # transitions probabilities
+B = {}  # emissions probabilities
 
-     Return:
-        [allTagCounts,perWordTagCounts,transitionCounts,emissionCounts,A,B] (a list)
-    """
-    #TODO complete the code
 
-    return [allTagCounts,perWordTagCounts,transitionCounts,emissionCounts,A,B]
+def learn_params(tagged_sentences):
+    """Populates and returns the allTagCounts, perWordTagCounts, transitionCounts,
+     and emissionCounts data-structures.
+    allTagCounts and perWordTagCounts should be used for baseline tagging and
+    should not include pseudocounts, dummy tags and unknowns.
+    The transisionCounts and emmisionCounts
+    should be computed with pseudo tags and should be smoothed.
+    A and B should be the log-probability of the normalized counts, based on
+    transisionCounts and  emmisionCounts
+
+    Args:
+      tagged_sentences: a list of tagged sentences, each tagged sentence is a
+       list of pairs (w,t), as retunred by load_annotated_corpus().
+
+   Return:
+      [allTagCounts,perWordTagCounts,transitionCounts,emissionCounts,A,B] (a list)
+  """
+
+    # todo: lower case the words?
+    train_tagged_words = [tup for sent in tagged_sentences for tup in sent]
+    tags = {tag for word, tag in train_tagged_words}
+    vocab = {word for word, tag in train_tagged_words}
+
+    allTagCounts = Counter(tag for word, tag in train_tagged_words)
+    perWordTagCounts = dict(Counter(tup for tup in train_tagged_words))
+    # for w in vocab:
+    #     perWordTagCounts[w] = Counter(tag for word, tag in train_tagged_words if word==w)
+
+    tagged_sentences_dummy = copy.deepcopy(tagged_sentences)
+    for sent in tagged_sentences_dummy:
+        sent.insert(0, ('<s>', START))
+        sent.append(('<e>', END))
+
+    train_tagged_words_dummy = [tup for sent in tagged_sentences_dummy for tup in sent]
+    tags_dummy = [tag for word, tag in train_tagged_words_dummy]
+
+    transitionCounts = dict(Counter((tags_dummy[i], tags_dummy[i + 1]) for i in range(len(tags_dummy) - 1) if
+                                    tags_dummy[i] != END and tags_dummy[i + 1] != START))
+    emissionCounts = dict(Counter(tup for tup in train_tagged_words_dummy))
+    allTagsCounts_dummy = dict(Counter(tag for word, tag in train_tagged_words_dummy))
+
+    # smooth transitionCounts
+    tags_list = list(allTagsCounts_dummy.keys())
+    for i in range(len(tags_list)):
+        for j in range(len(tags_list)):
+            tup = (tags_list[i], tags_list[j])
+            if tup not in transitionCounts.keys():
+                transitionCounts[tup] = 1
+
+    # smooth emissionCounts
+    for w in vocab:
+        for t in tags:
+            tup = (w, t)
+            if tup not in emissionCounts.keys():
+                emissionCounts[tup] = 1
+            else:
+                emissionCounts[tup] += 1
+
+    # create A dict
+    for key, value in transitionCounts.items():
+        # print(f'P({key[1]}|{key[0]}) = {value} / {allTagsCounts_dummy[key[0]]}')
+        A[key] = math.log(value / allTagsCounts_dummy[key[0]])
+
+    # create B dict
+    for key, value in emissionCounts.items():
+        B[key] = math.log(value / allTagsCounts_dummy[key[1]])
+
+    return [allTagCounts, perWordTagCounts, transitionCounts, emissionCounts, A, B]
+
 
 def baseline_tag_sentence(sentence, perWordTagCounts, allTagCounts):
     """Returns a list of pairs (w,t) where each w corresponds to a word
@@ -110,13 +186,18 @@ def baseline_tag_sentence(sentence, perWordTagCounts, allTagCounts):
         list: list of pairs
     """
 
-    #TODO complete the code
+    for word in sentence:
+
+    oov_tag = random.choices(population=list(allTagCounts.keys()), weights=list(allTagCounts.values()), k=1)[0]
+
+    # TODO complete the code
 
     return tagged_sentence
 
-#===========================================
+
+# ===========================================
 #       POS tagging with HMM
-#===========================================
+# ===========================================
 
 
 def hmm_tag_sentence(sentence, A, B):
@@ -133,16 +214,17 @@ def hmm_tag_sentence(sentence, A, B):
         list: list of pairs
     """
 
-    #TODO complete the code
+    # TODO complete the code
 
     return tagged_sentence
 
-def viterbi(sentence, A,B):
+
+def viterbi(sentence, A, B):
     """Creates the Viterbi matrix, column by column. Each column is a list of
     tuples representing cells. Each cell ("item") is a tupple (t,r,p), were
     t is the tag being scored at the current position,
     r is a reference to the corresponding best item from the previous position,
-    and p is a log probabilityof the sequence so far).
+    and p is a log probability of the sequence so far).
 
     The function returns the END item, from which it is possible to
     trace back to the beginning of the sentence.
@@ -150,35 +232,36 @@ def viterbi(sentence, A,B):
     Args:
         sentence (list): a list of tokens (the sentence to tag)
         A (dict): The HMM Transition probabilities
-        B (dict): tthe HMM emmission probabilities.
+        B (dict): The HMM Emission probabilities.
 
     Return:
-        obj: the last item, tagged with END. should allow backtraking.
+        obj: the last item, tagged with END. should allow backtracking.
 
         """
-        # Hint 1: For efficiency reasons - for words seen in training there is no
-        #      need to consider all tags in the tagset, but only tags seen with that
-        #      word. For OOV you have to consider all tags.
-        # Hint 2: start with a dummy item  with the START tag (what would it log-prob be?).
-        #         current list = [ the dummy item ]
-        # Hint 3: end the sequence with a dummy: the highest-scoring item with the tag END
+    # Hint 1: For efficiency reasons - for words seen in training there is no
+    #      need to consider all tags in the tagset, but only tags seen with that
+    #      word. For OOV you have to consider all tags.
+    # Hint 2: start with a dummy item  with the START tag (what would it log-prob be?).
+    #         current list = [ the dummy item ]
+    # Hint 3: end the sequence with a dummy: the highest-scoring item with the tag END
 
-
-    #TODO complete the code
+    # TODO complete the code
 
     return v_last
 
-#a suggestion for a helper function. Not an API requirement
+
+# a suggestion for a helper function. Not an API requirement
 def retrace(end_item):
     """Returns a list of tags (retracing the sequence with the highest probability,
         reversing it and returning the list). The list should correspond to the
         list of words in the sentence (same indices).
     """
 
-#a suggestion for a helper function. Not an API requirement
+
+# a suggestion for a helper function. Not an API requirement
 def predict_next_best(word, tag, predecessor_list):
-"""Returns a new item (tupple)
-"""
+    """Returns a new item (tupple)
+    """
 
 
 def joint_prob(sentence, A, B):
@@ -190,17 +273,17 @@ def joint_prob(sentence, A, B):
          A (dict): The HMM Transition probabilities
          B (dict): the HMM emmission probabilities.
      """
-    p = 0   # joint log prob. of words and tags
+    p = 0  # joint log prob. of words and tags
 
-    #TODO complete the code
+    # TODO complete the code
 
-    assert isfinite(p) and p<0  # Should be negative. Think why!
+    assert isfinite(p) and p < 0  # Should be negative. Think why!
     return p
 
 
-#===========================================
+# ===========================================
 #       POS tagging with BiLSTM
-#===========================================
+# ===========================================
 
 """ You are required to support two types of bi-LSTM:
     1. a vanilla biLSTM in which the input layer is based on simple word embeddings
@@ -208,6 +291,7 @@ def joint_prob(sentence, A, B):
         encoding case information, see
         https://arxiv.org/pdf/1510.06168.pdf
 """
+
 
 # Suggestions and tips, not part of the required API
 #
@@ -262,12 +346,12 @@ def initialize_rnn_model(params_d):
         #to the returned dict
     """
 
-    #TODO complete the code
+    # TODO complete the code
 
     return model
 
-#no need for this one as part of the API
-#def get_model_params(model):
+    # no need for this one as part of the API
+    # def get_model_params(model):
     """Returns a dictionary specifying the parameters of the specified model.
     This dictionary should be used to create another instance of the model.
 
@@ -282,9 +366,10 @@ def initialize_rnn_model(params_d):
         'output_dimension': int}
     """
 
-    #TODO complete the code
+    # TODO complete the code
 
-    #return params_d
+    # return params_d
+
 
 def load_pretrained_embeddings(path, vocab=None):
     """ Returns an object with the the pretrained vectors, loaded from the
@@ -301,11 +386,11 @@ def load_pretrained_embeddings(path, vocab=None):
         vocab (list): a list of words to have embeddings for. Defaults to None.
 
     """
-    #TODO
+    # TODO
     return vectors
 
 
-def train_rnn(model, train_data, val_data = None):
+def train_rnn(model, train_data, val_data=None):
     """Trains the BiLSTM model on the specified data.
 
     Args:
@@ -318,16 +403,16 @@ def train_rnn(model, train_data, val_data = None):
         input_rep (int): sets the input representation. Defaults to 0 (vanilla),
                          1: case-base; <other int>: other models, if you are playful
     """
-    #Tips:
+    # Tips:
     # 1. you have to specify an optimizer
     # 2. you have to specify the loss function and the stopping criteria
     # 3. consider using batching
     # 4. some of the above could be implemented in helper functions (not part of
     #    the required API)
 
-    #TODO complete the code
+    # TODO complete the code
 
-    criterion = nn.CrossEntropyLoss() #you can set the parameters as you like
+    criterion = nn.CrossEntropyLoss()  # you can set the parameters as you like
     vectors = load_pretrained_embeddings(pretrained_embeddings_fn)
 
     model = model.to(device)
@@ -347,7 +432,7 @@ def rnn_tag_sentence(sentence, model):
         list: list of pairs
     """
 
-    #TODO complete the code
+    # TODO complete the code
 
     return tagged_sentence
 
@@ -359,14 +444,14 @@ def get_best_performing_model_params():
         a model and train a model by calling
                initialize_rnn_model() and train_lstm()
     """
-    #TODO complete the code
+    # TODO complete the code
 
     return model_params
 
 
-#===========================================================
+# ===========================================================
 #       Wrapper function (tagging with a specified model)
-#===========================================================
+# ===========================================================
 
 def tag_sentence(sentence, model):
     """Returns a list of pairs (w,t) where pair corresponds to a word (same index) in
@@ -400,14 +485,15 @@ def tag_sentence(sentence, model):
     Return:
         list: list of pairs
     """
-    if list(model.keys())[0]=='baseline':
+    if list(model.keys())[0] == 'baseline':
         return baseline_tag_sentence(sentence, model.values()[0], model.values()[1])
-    if list(model.keys())[0]=='hmm':
+    if list(model.keys())[0] == 'hmm':
         return hmm_tag_sentence(sentence, model.values()[0], model.values()[1])
     if list(model.keys())[0] == 'blstm':
         return rnn_tag_sentence(sentence, model.values()[0])
     if list(model.keys())[0] == 'cblstm':
         return rnn_tag_sentence(sentence, model.values()[0])
+
 
 def count_correct(gold_sentence, pred_sentence):
     """Return the total number of correctly predicted tags,the total number of
@@ -419,8 +505,8 @@ def count_correct(gold_sentence, pred_sentence):
         pred_sentence (list): list of pairs, tags are predicted by tagger
 
     """
-    assert len(gold_sentence)==len(pred_sentence)
+    assert len(gold_sentence) == len(pred_sentence)
 
-    #TODO complete the code
+    # TODO complete the code
 
     return correct, correctOOV, OOV
