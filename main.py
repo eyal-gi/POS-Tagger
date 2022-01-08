@@ -154,13 +154,13 @@ def learn_params(tagged_sentences):
 
     # smooth emissionCounts
     # todo: consider removing this smoothing
-    for w in vocab:
-        for t in tags:
-            tup = (w, t)
-            if tup not in emissionCounts.keys():
-                emissionCounts[tup] = 1
-            else:
-                emissionCounts[tup] += 1
+    # for w in vocab:
+    for t in tags:
+        tup = (UNK, t)
+        if tup not in emissionCounts.keys():
+            emissionCounts[tup] = 1
+        else:
+            emissionCounts[tup] += 1
 
     # create A dict
     for key, value in transitionCounts.items():
@@ -228,10 +228,11 @@ def hmm_tag_sentence(sentence, A, B):
     """
 
     tagged_sentence = []
-    for word in sentence:
-        pass
+    last_item = viterbi(sentence, A, B)
+    pos_list = retrace(last_item)
 
-    # TODO complete the code
+    for word, tag in zip(sentence, pos_list):
+        tagged_sentence.append((word, tag))
 
     return tagged_sentence
 
@@ -267,41 +268,45 @@ def viterbi(sentence, A, B):
     first column = P(state|<start>)*P(word|state)
     loop through all the words and all the states
     """
-    # q_matrix = np.zeros(shape=(len(A), len(sentence)))  # Q[num_states(tags)][num_words]
     q_matrix = []
-    r = []
-    dummy = (START, r, 0)  # dummy_item = (t=dummy_start, r=none, p=0)
-    current_list = [dummy]
 
     # for every word in the sentence
-    for w in sentence:
+    for w, i in zip(sentence, range(len(sentence))):
         # init empty column
         col = []
-        # if a word is OOV -> assign with the dummy UNK
+        # if a word is OOV -> assign with the dummy UNK and check all tags
         if w not in VOCAB:
             word = UNK
+            tags_list = TAGS
         else:
             word = w
+            # create a list of tags of only tags that appeared for this word in the train set
+            tags_list = [tag for tag in TAGS if (word, tag) in B]
 
         # calc prob for every tag for the word
-        # todo: for efficient - only look for tags from the train for this word.
-        tags_list = TAGS
         for tag in tags_list:
             # initialization step (first column)
-            if sentence.index(word) == 0:
-                col.append((tag, r.append(START), A[(START, tag)] + B[(word, tag)]))
-            else:
+            if i == 0:
+                r = START
+                col.append((tag, r, A[(START, tag)] + B[(word, tag)]))
+
             # main algorithm
-            col.append()
+            else:
+                tag_, r, log_prob = predict_next_best(word, tag, q_matrix[i - 1])
+                col.append((tag_, r, log_prob))
 
         q_matrix.append(col)
 
+    # _print_matrix(q_matrix)   # todo: delete
 
-
-
-    # TODO complete the code
-    v_last = (0, [0], 0)
+    v_last = predict_next_best('<e>', END, q_matrix[-1])
     return v_last
+
+
+def _print_matrix(matrix):
+    for col, i in zip(matrix, range(len(matrix))):
+        print(f'--------- COL {i} ----------')
+        print(col)
 
 
 # a suggestion for a helper function. Not an API requirement
@@ -310,12 +315,37 @@ def retrace(end_item):
         reversing it and returning the list). The list should correspond to the
         list of words in the sentence (same indices).
     """
+    retrace_list = []
+    retrace_(end_item, retrace_list)
+
+    # remove START and END dummies
+    retrace_list = retrace_list[1:-1]
+    return retrace_list[::-1]
+
+
+def retrace_(item, retrace_list):
+    if item[1] == START:
+        retrace_list.append(item[0])
+        return retrace_list.append(item[1])
+
+    retrace_list.append(item[0])
+    retrace_(item[1], retrace_list)
 
 
 # a suggestion for a helper function. Not an API requirement
 def predict_next_best(word, tag, predecessor_list):
     """Returns a new item (tupple)
     """
+    candidates = []  # candidate list for every cell (transition for every other tag))
+    for prev in predecessor_list:
+        # ##__prev[0]=tag, prev[1]=backtrace, prev[2]=log-prob__##
+        prev_tag, _, prev_log_prob = prev
+        candidates.append(prev_log_prob + A[(prev_tag, tag)] + B[(word, tag)])
+    best_score = max(candidates)
+    best_index = candidates.index(best_score)
+    r = predecessor_list[best_index]
+
+    return tag, r, best_score
 
 
 def joint_prob(sentence, A, B):
