@@ -118,16 +118,18 @@ def learn_params(tagged_sentences):
    Return:
       [allTagCounts,perWordTagCounts,transitionCounts,emissionCounts,A,B] (a list)
   """
+    global VOCAB
+    global TAGS
 
     # todo: lower case the words?
     train_tagged_words = [tup for sent in tagged_sentences for tup in sent]
     tags = {tag for word, tag in train_tagged_words}
     vocab = {word for word, tag in train_tagged_words}
-
+    vocab.add(UNK)
+    VOCAB = vocab
+    TAGS = tags
     allTagCounts = Counter(tag for word, tag in train_tagged_words)
     perWordTagCounts = dict(Counter(tup for tup in train_tagged_words))
-    # for w in vocab:
-    #     perWordTagCounts[w] = Counter(tag for word, tag in train_tagged_words if word==w)
 
     tagged_sentences_dummy = copy.deepcopy(tagged_sentences)
     for sent in tagged_sentences_dummy:
@@ -151,6 +153,7 @@ def learn_params(tagged_sentences):
                 transitionCounts[tup] = 1
 
     # smooth emissionCounts
+    # todo: consider removing this smoothing
     for w in vocab:
         for t in tags:
             tup = (w, t)
@@ -185,12 +188,22 @@ def baseline_tag_sentence(sentence, perWordTagCounts, allTagCounts):
         Return:
         list: list of pairs
     """
-
+    tagged_sentence = []
     for word in sentence:
+        if word in VOCAB:
+            # dictionary of only the (word,tag) and values
+            word_tag_dict = {tag: perWordTagCounts[(word, tag)] for tag in allTagCounts if
+                             (word, tag) in perWordTagCounts}
 
-    oov_tag = random.choices(population=list(allTagCounts.keys()), weights=list(allTagCounts.values()), k=1)[0]
+            # choose the tag with max count
+            tag = max(word_tag_dict, key=word_tag_dict.get)
+            tagged_sentence.append((word, tag))
 
-    # TODO complete the code
+        # OOV word
+        else:
+            # tag is sampled by a random choice from the pos tag distribution
+            oov_tag = random.choices(population=list(allTagCounts.keys()), weights=list(allTagCounts.values()), k=1)[0]
+            tagged_sentence.append((word, oov_tag))
 
     return tagged_sentence
 
@@ -213,6 +226,10 @@ def hmm_tag_sentence(sentence, A, B):
     Return:
         list: list of pairs
     """
+
+    tagged_sentence = []
+    for word in sentence:
+        pass
 
     # TODO complete the code
 
@@ -245,8 +262,45 @@ def viterbi(sentence, A, B):
     #         current list = [ the dummy item ]
     # Hint 3: end the sequence with a dummy: the highest-scoring item with the tag END
 
-    # TODO complete the code
+    """
+    create an array Q[][] with dimension of num_states(tags)*num_words
+    first column = P(state|<start>)*P(word|state)
+    loop through all the words and all the states
+    """
+    # q_matrix = np.zeros(shape=(len(A), len(sentence)))  # Q[num_states(tags)][num_words]
+    q_matrix = []
+    r = []
+    dummy = (START, r, 0)  # dummy_item = (t=dummy_start, r=none, p=0)
+    current_list = [dummy]
 
+    # for every word in the sentence
+    for w in sentence:
+        # init empty column
+        col = []
+        # if a word is OOV -> assign with the dummy UNK
+        if w not in VOCAB:
+            word = UNK
+        else:
+            word = w
+
+        # calc prob for every tag for the word
+        # todo: for efficient - only look for tags from the train for this word.
+        tags_list = TAGS
+        for tag in tags_list:
+            # initialization step (first column)
+            if sentence.index(word) == 0:
+                col.append((tag, r.append(START), A[(START, tag)] + B[(word, tag)]))
+            else:
+            # main algorithm
+            col.append()
+
+        q_matrix.append(col)
+
+
+
+
+    # TODO complete the code
+    v_last = (0, [0], 0)
     return v_last
 
 
@@ -507,6 +561,16 @@ def count_correct(gold_sentence, pred_sentence):
     """
     assert len(gold_sentence) == len(pred_sentence)
 
-    # TODO complete the code
+    correct = 0
+    correctOOV = 0
+    OOV = 0
+    for i in range(len(gold_sentence)):
+        if gold_sentence[i][1] == pred_sentence[i][1]:
+            correct += 1
+            if pred_sentence[i][0] not in VOCAB:
+                correctOOV += 1
+                OOV += 1
+        elif pred_sentence[i][0] not in VOCAB:
+            OOV += 1
 
     return correct, correctOOV, OOV
