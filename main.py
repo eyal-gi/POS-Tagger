@@ -297,8 +297,6 @@ def viterbi(sentence, A, B):
 
         q_matrix.append(col)
 
-    # _print_matrix(q_matrix)   # todo: delete
-
     v_last = predict_next_best('<e>', END, q_matrix[-1])
     return v_last
 
@@ -324,6 +322,11 @@ def retrace(end_item):
 
 
 def retrace_(item, retrace_list):
+    """
+    Recursive function to create the retrace list
+    :param item: current item
+    :param retrace_list: the retrace list
+    """
     if item[1] == START:
         retrace_list.append(item[0])
         return retrace_list.append(item[1])
@@ -358,8 +361,13 @@ def joint_prob(sentence, A, B):
          B (dict): the HMM emmission probabilities.
      """
     p = 0  # joint log prob. of words and tags
-
-    # TODO complete the code
+    prev = START
+    for word, tag in sentence:
+        if word not in VOCAB:
+            word = UNK
+        p += A[(prev, tag)]
+        p += B[(word, tag)]
+        prev = tag
 
     assert isfinite(p) and p < 0  # Should be negative. Think why!
     return p
@@ -435,7 +443,7 @@ def initialize_rnn_model(params_d):
     return model
 
     # no need for this one as part of the API
-    # def get_model_params(model):
+def get_model_params(model):
     """Returns a dictionary specifying the parameters of the specified model.
     This dictionary should be used to create another instance of the model.
 
@@ -452,7 +460,7 @@ def initialize_rnn_model(params_d):
 
     # TODO complete the code
 
-    # return params_d
+    return params_d
 
 
 def load_pretrained_embeddings(path, vocab=None):
@@ -570,13 +578,13 @@ def tag_sentence(sentence, model):
         list: list of pairs
     """
     if list(model.keys())[0] == 'baseline':
-        return baseline_tag_sentence(sentence, model.values()[0], model.values()[1])
+        return baseline_tag_sentence(sentence, list(model.values())[0], list(model.values())[1])
     if list(model.keys())[0] == 'hmm':
-        return hmm_tag_sentence(sentence, model.values()[0], model.values()[1])
+        return hmm_tag_sentence(sentence, list(model.values())[0], list(model.values())[1])
     if list(model.keys())[0] == 'blstm':
-        return rnn_tag_sentence(sentence, model.values()[0])
+        return rnn_tag_sentence(sentence, list(model.values())[0])
     if list(model.keys())[0] == 'cblstm':
-        return rnn_tag_sentence(sentence, model.values()[0])
+        return rnn_tag_sentence(sentence, list(model.values())[0])
 
 
 def count_correct(gold_sentence, pred_sentence):
