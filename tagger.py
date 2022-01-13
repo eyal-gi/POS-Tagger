@@ -7,7 +7,6 @@ to predict the part of speech sequence for a given sentence.
 
 """
 import copy
-
 import math
 import torch
 import torch.nn as nn
@@ -37,7 +36,8 @@ def use_seed(seed=2512021):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.set_deterministic(True)
+    # torch.set_deterministic(True)
+    torch.use_deterministic_algorithms(True)
     # torch.backends.cudnn.deterministic = True
 
 
@@ -276,8 +276,10 @@ def viterbi(sentence, A, B):
         col = []
         # if a word is OOV -> assign with the dummy UNK and check all tags
         if w not in VOCAB:
-            word = UNK
-            tags_list = TAGS
+            w.lower()    # look for this word when it is lower cased
+            if w not in VOCAB:
+                word = UNK
+                tags_list = TAGS
         else:
             word = w
             # create a list of tags of only tags that appeared for this word in the train set

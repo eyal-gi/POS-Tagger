@@ -1,6 +1,5 @@
 import re
-
-import main as tagger
+import tagger as tagger
 import time
 
 # ===========================================
@@ -10,6 +9,9 @@ start = time.time()
 
 train_dataset = tagger.load_annotated_corpus('en-ud-train.upos.tsv')
 test_dataset = tagger.load_annotated_corpus('en-ud-dev.upos.tsv')
+
+# print(len(train_dataset))
+# print(len(test_dataset))
 
 x_test = []
 y_test = []
@@ -31,11 +33,16 @@ allTagCount, perWordTagCounts, transitionCounts, emissionCounts, A, B = params
 
 # #================= Baseline ================#
 acc = []
+correct_OOV = 0
+OOV_count = 0
 for sent, gold_sent in zip(x_test, test_dataset):
     tagged_sentence = tagger.baseline_tag_sentence(sent, perWordTagCounts, allTagCount)
-    correct, _, _ = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
+    correct, correctOOV, OOV = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
     acc.append(correct/len(sent))
+    correct_OOV += correctOOV
+    OOV_count += OOV
 print(f'base line accuracy: {sum(acc)/len(acc):.4f}')
+print(f'base line oov accuracy: {correct_OOV/OOV_count:.4f}')
 
 
 # #================= HMM One sentence check ================#
@@ -51,10 +58,16 @@ print(f'base line accuracy: {sum(acc)/len(acc):.4f}')
 
 # #================= HMM ================#
 acc = []
+correct_OOV = 0
+OOV_count = 0
 for sent, gold_sent in zip(x_test, test_dataset):
     tagged_sentence = tagger.hmm_tag_sentence(sent, A, B)
-    correct, _, _ = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
+    correct, correctOOV, OOV = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
     acc.append(correct/len(sent))
+    correct_OOV += correctOOV
+    OOV_count += OOV
 print(f'hmm accuracy: {sum(acc)/len(acc):.4f}')
+print(f'hmm oov accuracy: {correct_OOV/OOV_count:.4f}')
+
 end = time.time()
 print(f'time: {end-start:.4f}')
