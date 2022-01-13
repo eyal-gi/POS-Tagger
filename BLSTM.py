@@ -1,16 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
 from torchtext.legacy.data import Field, LabelField, BucketIterator, TabularDataset
 from torchtext.legacy import datasets
-
 import spacy
 import numpy as np
-
 import time
 import random
-
 from torch.utils.data import DataLoader, Dataset
 from torch.nn.utils.rnn import pad_sequence
 from sklearn.model_selection import train_test_split, StratifiedKFold

@@ -24,6 +24,8 @@ import pandas as pd
 import numpy as np
 import matplotlib as plt
 import seaborn as sns
+import BiLSTM
+from torchtext.legacy.data import Field, BucketIterator
 
 # With this line you don't need to worry about the HW  -- GPU or CPU
 # GPU cuda cores will be used if available
@@ -118,6 +120,7 @@ def learn_params(tagged_sentences):
    Return:
       [allTagCounts,perWordTagCounts,transitionCounts,emissionCounts,A,B] (a list)
   """
+    # todo consider not doing this
     global VOCAB
     global TAGS
 
@@ -276,7 +279,7 @@ def viterbi(sentence, A, B):
         col = []
         # if a word is OOV -> assign with the dummy UNK and check all tags
         if w not in VOCAB:
-            w.lower()    # look for this word when it is lower cased
+            w.lower()  # look for this word when it is lower cased
             if w not in VOCAB:
                 word = UNK
                 tags_list = TAGS
@@ -398,6 +401,25 @@ def joint_prob(sentence, A, B):
 #  5. Think about the way you implement the input representation
 #  6. Consider using different unit types (LSTM, GRU,LeRU)
 
+def _prepare_data(dataset):
+    """
+    Gets labeled data (tuples) and return it a dictionary of x_data, y_data
+    :param dataset:
+    :return:
+    """
+    x_data = []
+    labels = []
+    for sent in dataset:
+        sentence = []
+        tags = []
+        for word, tag in sent:
+            sentence.append(word)
+            tags.append(tag)
+        x_data.append(sentence)
+        labels.append(tags)
+
+    return x_data, labels
+
 
 def initialize_rnn_model(params_d):
     """Returns a dictionary with the objects and parameters needed to run/train_rnn
@@ -439,12 +461,55 @@ def initialize_rnn_model(params_d):
         #Hint: you may consider adding the embeddings and the vocabulary
         #to the returned dict
     """
+    # ## model variables
+    DROPOUT = 0.25
+    HIDDEN_DIM = 128
 
-    # TODO complete the code
+    # ## load and prepare train data
+    train_set = load_annotated_corpus(params_d['data_fn'])
+    x_train, y_train = _prepare_data(train_set)
+    TEXT = Field(lower=True)
+    UD_TAGS = Field(unk_token=None)
+
+    # ## build words and tags vocabularies
+    TEXT.build_vocab(x_train,
+                     min_freq=params_d['min_frequency'],
+                     vectors=params_d['pretrained_embeddings_fn'],  # todo: change this, oren will send .txt
+                     unk_init=torch.Tensor.normal_,
+                     max_size=None if params_d['max_vocab_size'] == -1 else params_d['max_vocab_size'])
+
+    UD_TAGS.build_vocab(y_train)
+
+    # ## more model variables
+    INPUT_DIM = len(TEXT.vocab)
+    PAD_IDX = TEXT.vocab.stoi[TEXT.pad_token]
+
+    # ## initiate a model
+    lstm_model = BiLSTM.LSTM(input_dim=INPUT_DIM,
+                             embedding_dim=params_d['embedding_dimension'],
+                             hidden_dim=HIDDEN_DIM,
+                             output_dim=params_d['output_dimension'],
+                             n_layers=params_d['num_of_layers'],
+                             dropout=DROPOUT,
+                             pad_idx=PAD_IDX)
+
+    lstm_model.apply(_init_weights)
+
+    pretrained_embeddings = TEXT.vocab.vectors
+    lstm_model.embedding.weight.data.copy_(pretrained_embeddings)
+    # set pad tag embedding to 0
+    lstm_model.embedding.weight.data[PAD_IDX] = torch.zeros(params_d['embedding_dimension'])
+
+    model = {'lstm': lstm_model,
+             'input_rep': params_d['input_rep'],
+             'TEXT': TEXT,
+             'TAGS': UD_TAGS
+             }
 
     return model
 
-    # no need for this one as part of the API
+
+# no need for this one as part of the API
 def get_model_params(model):
     """Returns a dictionary specifying the parameters of the specified model.
     This dictionary should be used to create another instance of the model.
@@ -460,8 +525,7 @@ def get_model_params(model):
         'output_dimension': int}
     """
 
-    # TODO complete the code
-
+    params_d = model.get_params_dict()
     return params_d
 
 
@@ -484,6 +548,11 @@ def load_pretrained_embeddings(path, vocab=None):
     return vectors
 
 
+def _init_weights(m):
+    for name, param in m.named_parameters():
+        nn.init.normal_(param.data, mean=0, std=0.1)
+
+
 def train_rnn(model, train_data, val_data=None):
     """Trains the BiLSTM model on the specified data.
 
@@ -504,13 +573,49 @@ def train_rnn(model, train_data, val_data=None):
     # 4. some of the above could be implemented in helper functions (not part of
     #    the required API)
 
-    # TODO complete the code
+    BATCH_SIZE = 128
 
-    criterion = nn.CrossEntropyLoss()  # you can set the parameters as you like
-    vectors = load_pretrained_embeddings(pretrained_embeddings_fn)
+    lstm_model = model['lstm']
+    input_rep = model['input_rep']
+    TEXT = model['TEXT']
+    UD_TAGS = model['TAGS']
 
-    model = model.to(device)
+
+    x_train, y_train = _prepare_data(train_data)
+    train_torch_dataset = BiLSTM.ConvertDataset(x_train, y_train)
+    # ## create data iterators
+    train_iterator = BucketIterator(
+        train_torch_dataset,
+        batch_size=BATCH_SIZE,
+        device=device,
+        # Function to use for sorting examples.
+        sort_key=lambda x: len(x['text']),
+        # Repeat the iterator for multiple epochs.
+        repeat=True,
+        # Sort all examples in data using `sort_key`.
+        sort=False,
+        # Shuffle data on each epoch run.
+        shuffle=True,
+        # Use `sort_key` to sort examples in each batch.
+        sort_within_batch=True
+    )
+
+
+    optimizer = optim.Adam(lstm_model.parameters())
+    TAG_PAD_IDX = UD_TAGS.vocab.stoi[UD_TAGS.pad_token]
+
+
+    criterion = nn.CrossEntropyLoss(ignore_index=TAG_PAD_IDX)  # you can set the parameters as you like
+    # vectors = load_pretrained_embeddings(pretrained_embeddings_fn)
+
+    lstm_model = lstm_model.to(device)
     criterion = criterion.to(device)
+
+    N_EPOCHS = 17
+    N_EPOCHS = 1
+
+    lstm_model.fit(train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS)
+
 
 
 def rnn_tag_sentence(sentence, model):
