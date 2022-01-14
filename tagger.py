@@ -10,6 +10,7 @@ import copy
 import math
 import torch
 import torch.nn as nn
+import torchtext.legacy.data
 from torchtext import data
 import torch.optim as optim
 from math import log, isfinite
@@ -26,6 +27,7 @@ import matplotlib as plt
 import seaborn as sns
 import BiLSTM
 from torchtext.legacy.data import Field, BucketIterator
+from torchtext.legacy import datasets
 
 # With this line you don't need to worry about the HW  -- GPU or CPU
 # GPU cuda cores will be used if available
@@ -580,16 +582,19 @@ def train_rnn(model, train_data, val_data=None):
     TEXT = model['TEXT']
     UD_TAGS = model['TAGS']
 
-
     x_train, y_train = _prepare_data(train_data)
     train_torch_dataset = BiLSTM.ConvertDataset(x_train, y_train)
+
+    fields = (("text", TEXT), ("udtags", UD_TAGS))
+    train_torchtext_dataset = BiLSTM.SequenceTaggingDataset([x_train, y_train], fields=fields)
+
     # ## create data iterators
     train_iterator = BucketIterator(
-        train_torch_dataset,
+        train_torchtext_dataset,
         batch_size=BATCH_SIZE,
         device=device,
         # Function to use for sorting examples.
-        sort_key=lambda x: len(x['text']),
+        sort_key=lambda x: len(x.text),
         # Repeat the iterator for multiple epochs.
         repeat=True,
         # Sort all examples in data using `sort_key`.
@@ -600,10 +605,13 @@ def train_rnn(model, train_data, val_data=None):
         sort_within_batch=True
     )
 
+    # train_iterator = BucketIterator(
+    #     train_torchtext_dataset,
+    #     batch_size=BATCH_SIZE,
+    #     device=device)
 
     optimizer = optim.Adam(lstm_model.parameters())
     TAG_PAD_IDX = UD_TAGS.vocab.stoi[UD_TAGS.pad_token]
-
 
     criterion = nn.CrossEntropyLoss(ignore_index=TAG_PAD_IDX)  # you can set the parameters as you like
     # vectors = load_pretrained_embeddings(pretrained_embeddings_fn)
@@ -611,11 +619,10 @@ def train_rnn(model, train_data, val_data=None):
     lstm_model = lstm_model.to(device)
     criterion = criterion.to(device)
 
-    N_EPOCHS = 17
+    # N_EPOCHS = 17
     N_EPOCHS = 1
 
     lstm_model.fit(train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS)
-
 
 
 def rnn_tag_sentence(sentence, model):

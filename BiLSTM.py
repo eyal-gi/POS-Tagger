@@ -8,6 +8,7 @@ import numpy as np
 import time
 import random
 from torch.utils.data import DataLoader, Dataset
+from torchtext.legacy import data
 from torch.nn.utils.rnn import pad_sequence
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score, confusion_matrix, \
@@ -117,8 +118,9 @@ class LSTM(nn.Module):
         self.train()
 
         # for sample_id, batch in enumerate(iterator.batches):
-        for x, y in iterator:
-            text = batch[sample_id]['text']
+        for batch in iterator:
+            print('training batch')
+            text = batch.text
             tags = batch.udtags
 
             optimizer.zero_grad()
@@ -199,7 +201,7 @@ class LSTM(nn.Module):
                    }
 
         for epoch in range(n_epochs):
-
+            print(f'train epoch {epoch}')
             start_time = time.time()
 
             train_iterator.create_batches()
@@ -239,3 +241,30 @@ class ConvertDataset(Dataset):
 
     def __len__(self):
         return len(self.x)
+
+
+class SequenceTaggingDataset(data.Dataset):
+    """Defines a dataset for sequence tagging. Examples in this dataset
+    contain paired lists -- paired list of words and tags.
+
+    For example, in the case of part-of-speech tagging, an example is of the
+    form
+    [I, love, PyTorch, .] paired with [PRON, VERB, PROPN, PUNCT]
+
+    See torchtext/test/sequence_tagging.py on how to use this class.
+    """
+
+    @staticmethod
+    def sort_key(example):
+        for attr in dir(example):
+            if not callable(getattr(example, attr)) and \
+                    not attr.startswith("__"):
+                return len(getattr(example, attr))
+        return 0
+
+    def __init__(self, columns, fields, encoding="utf-8", separator="\t", **kwargs):
+        examples = []
+        for words, labels in zip(columns[0], columns[-1]):
+            examples.append(data.Example.fromlist([words, labels], fields))
+        super(SequenceTaggingDataset, self).__init__(examples, fields,
+                                                     **kwargs)
