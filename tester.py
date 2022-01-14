@@ -26,21 +26,21 @@ for sent in test_dataset:
 
 # 0-allTagCounts, 1-perWordTagCounts, 2-transitionCounts, 3-emissionCounts, 4-A, 5-B
 params = tagger.learn_params(train_dataset)
-#
-# allTagCount, perWordTagCounts, transitionCounts, emissionCounts, A, B = params
 
-# #================= Baseline ================#
-# acc = []
-# correct_OOV = 0
-# OOV_count = 0
-# for sent, gold_sent in zip(x_test, test_dataset):
-#     tagged_sentence = tagger.baseline_tag_sentence(sent, perWordTagCounts, allTagCount)
-#     correct, correctOOV, OOV = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
-#     acc.append(correct/len(sent))
-#     correct_OOV += correctOOV
-#     OOV_count += OOV
-# print(f'base line accuracy: {sum(acc)/len(acc):.4f}')
-# print(f'base line oov accuracy: {correct_OOV/OOV_count:.4f}')
+allTagCount, perWordTagCounts, transitionCounts, emissionCounts, A, B = params
+
+#================= Baseline ================#
+acc = []
+correct_OOV = 0
+OOV_count = 0
+for sent, gold_sent in zip(x_test, test_dataset):
+    tagged_sentence = tagger.baseline_tag_sentence(sent, perWordTagCounts, allTagCount)
+    correct, correctOOV, OOV = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
+    acc.append(correct/len(sent))
+    correct_OOV += correctOOV
+    OOV_count += OOV
+print(f'base line accuracy: {sum(acc)/len(acc):.4f}')
+print(f'base line oov accuracy: {correct_OOV/OOV_count:.4f}')
 
 
 # #================= HMM One sentence check ================#
@@ -53,38 +53,34 @@ params = tagger.learn_params(train_dataset)
 # print(tagger.joint_prob(tagged, A, B))
 
 
-# #================= HMM ================#
-# acc = []
-# correct_OOV = 0
-# OOV_count = 0
-# for sent, gold_sent in zip(x_test, test_dataset):
-#     tagged_sentence = tagger.hmm_tag_sentence(sent, A, B)
-#     correct, correctOOV, OOV = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
-#     acc.append(correct/len(sent))
-#     correct_OOV += correctOOV
-#     OOV_count += OOV
-# print(f'hmm accuracy: {sum(acc)/len(acc):.4f}')
-# print(f'hmm oov accuracy: {correct_OOV/OOV_count:.4f}')
-#
-# end = time.time()
-# print(f'time: {end-start:.4f}')
+#================= HMM ================#
+acc = []
+correct_OOV = 0
+OOV_count = 0
+for sent, gold_sent in zip(x_test, test_dataset):
+    tagged_sentence = tagger.hmm_tag_sentence(sent, A, B)
+    correct, correctOOV, OOV = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
+    acc.append(correct/len(sent))
+    correct_OOV += correctOOV
+    OOV_count += OOV
+print(f'hmm accuracy: {sum(acc)/len(acc):.4f}')
+print(f'hmm oov accuracy: {correct_OOV/OOV_count:.4f}')
+
+end = time.time()
+print(f'time: {end-start:.4f}')
 
 
 # #================= BiLSTM ================#
 
 MIN_FREQ = 2
 BATCH_SIZE = 128
-# INPUT_DIM = len(TEXT.vocab)
 EMBEDDING_DIM = 100
 HIDDEN_DIM = 128
-# OUTPUT_DIM = len(UD_TAGS.vocab)
 OUTPUT_DIM = 18
 N_LAYERS = 2
 BIDIRECTIONAL = True
 DROPOUT = 0.25
-# PAD_IDX = TEXT.vocab.stoi[TEXT.pad_token]
-
-MAX_VOCAB = 20000
+MAX_VOCAB = -1
 
 model_params = {'max_vocab_size': MAX_VOCAB,
             'min_frequency': MIN_FREQ,
@@ -98,7 +94,24 @@ model_params = {'max_vocab_size': MAX_VOCAB,
 
 model = tagger.initialize_rnn_model(model_params)
 tagger.train_rnn(model, train_dataset)
-# tag_sentence(sentence, model_to_use)
+
+# text = 'All of this started after their oil change .'
+# sentence = re.split(r'\s+', text)
+# sentence = ['[', 'this', 'killing', 'of', 'a', 'respected', 'cleric', 'will', 'be', 'causing', 'us', 'trouble', 'for', 'years', 'to', 'come', '.', ']']
+# tagged = tagger.rnn_tag_sentence(sentence, model)
+
+acc = []
+correct_OOV = 0
+OOV_count = 0
+for sent, gold_sent in zip(x_test, test_dataset):
+    tagged_sentence = tagger.rnn_tag_sentence(sent, model)
+    correct, correctOOV, OOV = tagger.count_correct(gold_sentence=gold_sent, pred_sentence=tagged_sentence)
+    acc.append(correct/len(sent))
+    correct_OOV += correctOOV
+    OOV_count += OOV
+print(f'BiLSTM accuracy: {sum(acc)/len(acc):.4f}')
+print(f'BiLSTM oov accuracy: {correct_OOV/OOV_count:.4f}')
+
 
 
 

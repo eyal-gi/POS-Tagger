@@ -403,26 +403,6 @@ def joint_prob(sentence, A, B):
 #  5. Think about the way you implement the input representation
 #  6. Consider using different unit types (LSTM, GRU,LeRU)
 
-def _prepare_data(dataset):
-    """
-    Gets labeled data (tuples) and return it a dictionary of x_data, y_data
-    :param dataset:
-    :return:
-    """
-    x_data = []
-    labels = []
-    for sent in dataset:
-        sentence = []
-        tags = []
-        for word, tag in sent:
-            sentence.append(word)
-            tags.append(tag)
-        x_data.append(sentence)
-        labels.append(tags)
-
-    return x_data, labels
-
-
 def initialize_rnn_model(params_d):
     """Returns a dictionary with the objects and parameters needed to run/train_rnn
        the lstm model. The LSTM is initialized based on the specified parameters.
@@ -550,9 +530,7 @@ def load_pretrained_embeddings(path, vocab=None):
     return vectors
 
 
-def _init_weights(m):
-    for name, param in m.named_parameters():
-        nn.init.normal_(param.data, mean=0, std=0.1)
+
 
 
 def train_rnn(model, train_data, val_data=None):
@@ -577,18 +555,19 @@ def train_rnn(model, train_data, val_data=None):
 
     BATCH_SIZE = 128
 
+    # ## read data from dictionary
     lstm_model = model['lstm']
     input_rep = model['input_rep']
     TEXT = model['TEXT']
     UD_TAGS = model['TAGS']
 
+    # ## split the data to sentences and tags
     x_train, y_train = _prepare_data(train_data)
-    train_torch_dataset = BiLSTM.ConvertDataset(x_train, y_train)
-
+    # ## define torchtext fields
     fields = (("text", TEXT), ("udtags", UD_TAGS))
+    # push the data into a torchtext type of dataset
     train_torchtext_dataset = BiLSTM.SequenceTaggingDataset([x_train, y_train], fields=fields)
-
-    # ## create data iterators
+    # ## create data iterator
     train_iterator = BucketIterator(
         train_torchtext_dataset,
         batch_size=BATCH_SIZE,
@@ -596,7 +575,7 @@ def train_rnn(model, train_data, val_data=None):
         # Function to use for sorting examples.
         sort_key=lambda x: len(x.text),
         # Repeat the iterator for multiple epochs.
-        repeat=True,
+        # repeat=True,
         # Sort all examples in data using `sort_key`.
         sort=False,
         # Shuffle data on each epoch run.
@@ -605,10 +584,19 @@ def train_rnn(model, train_data, val_data=None):
         sort_within_batch=True
     )
 
-    # train_iterator = BucketIterator(
-    #     train_torchtext_dataset,
-    #     batch_size=BATCH_SIZE,
-    #     device=device)
+    # ## if validation data was sent, do the same for val_data
+    if val_data is not None:
+        x_val, y_val = _prepare_data(val_data)
+        val_torchtext_dataset = BiLSTM.SequenceTaggingDataset([x_val, y_val], fields=fields)
+        val_iterator = BucketIterator(
+            val_torchtext_dataset,
+            batch_size=BATCH_SIZE,
+            device=device,
+            sort_key=lambda x: len(x.text),
+            sort=False,
+            sort_within_batch=True
+        )
+
 
     optimizer = optim.Adam(lstm_model.parameters())
     TAG_PAD_IDX = UD_TAGS.vocab.stoi[UD_TAGS.pad_token]
@@ -619,10 +607,16 @@ def train_rnn(model, train_data, val_data=None):
     lstm_model = lstm_model.to(device)
     criterion = criterion.to(device)
 
-    # N_EPOCHS = 17
     N_EPOCHS = 1
+    N_EPOCHS = 17
 
-    lstm_model.fit(train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS)
+    if val_data is None:
+        model_fit(lstm_model, train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS)
+        lstm_model.fit(train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS)
+    else:
+        model_fit(lstm_model, train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS, val_iterator)
+        lstm_model.fit(train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS, val_iterator)
+
 
 
 def rnn_tag_sentence(sentence, model):
@@ -637,8 +631,42 @@ def rnn_tag_sentence(sentence, model):
     Return:
         list: list of pairs
     """
+    # ## extract relevant data from model dict
+    lstm_model = model['lstm']
+    input_rep = model['input_rep']
+    TEXT = model['TEXT']
+    UD_TAGS = model['TAGS']
 
-    # TODO complete the code
+    # ## put the model into evaluation mode
+    lstm_model.eval()
+
+    if TEXT.lower:
+        tokens = [w.lower() for w in sentence]
+    else:
+        tokens = copy.copy(sentence)
+
+    # ## numericalize the tokens using the vocabulary
+    numericalized_tokens = [TEXT.vocab.stoi[w] for w in tokens]
+
+    # ## find out which tokens are not in the vocabulary, i.e. are <unk> tokens
+    unk_idx = TEXT.vocab.stoi[TEXT.unk_token]
+    unks = [w for w, n in zip(tokens, numericalized_tokens) if n == unk_idx]
+
+    # ## convert the numericalized tokens into a tensor and add a batch dimension
+    token_tensor = torch.LongTensor(numericalized_tokens)
+    token_tensor = token_tensor.unsqueeze(-1).to(device)
+
+    # ## feed the tensor into the model
+    predictions = lstm_model(token_tensor)
+    # ## get the predictions over the sentence
+    top_predictions = predictions.argmax(-1)
+    # ## convert the predictions into readable tags
+    predicted_tags = [UD_TAGS.vocab.itos[p.item()] for p in top_predictions]
+
+    # ## create tagged sentence
+    tagged_sentence = []
+    for word, tag in zip(sentence, predicted_tags):
+        tagged_sentence.append((word, tag))
 
     return tagged_sentence
 
@@ -653,6 +681,35 @@ def get_best_performing_model_params():
     # TODO complete the code
 
     return model_params
+
+# ===========================================================
+#       LSTM functions
+# ===========================================================
+def _prepare_data(dataset):
+    """
+    Gets labeled data (tuples) and return it a dictionary of x_data, y_data
+    :param dataset:
+    :return:
+    """
+    x_data = []
+    labels = []
+    for sent in dataset:
+        sentence = []
+        tags = []
+        for word, tag in sent:
+            sentence.append(word)
+            tags.append(tag)
+        x_data.append(sentence)
+        labels.append(tags)
+
+    return x_data, labels
+
+def _init_weights(m):
+    for name, param in m.named_parameters():
+        nn.init.normal_(param.data, mean=0, std=0.1)
+
+
+
 
 
 # ===========================================================

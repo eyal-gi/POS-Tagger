@@ -119,25 +119,21 @@ class LSTM(nn.Module):
 
         # for sample_id, batch in enumerate(iterator.batches):
         for batch in iterator:
-            print('training batch')
             text = batch.text
             tags = batch.udtags
 
             optimizer.zero_grad()
 
             # text = [sent len, batch size]
-
             predictions = self(text)
 
             # predictions = [sent len, batch size, output dim]
             # tags = [sent len, batch size]
-
             predictions = predictions.view(-1, predictions.shape[-1])
             tags = tags.view(-1)
 
             # predictions = [sent len * batch size, output dim]
             # tags = [sent len * batch size]
-
             loss = criterion(predictions, tags)
 
             acc = self.categorical_accuracy(predictions, tags, tag_pad_idx)
@@ -201,7 +197,6 @@ class LSTM(nn.Module):
                    }
 
         for epoch in range(n_epochs):
-            print(f'train epoch {epoch}')
             start_time = time.time()
 
             train_iterator.create_batches()
@@ -224,23 +219,6 @@ class LSTM(nn.Module):
                 print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc * 100:.2f}%')
                 if valid_iterator is not None:
                     print(f'\t Val. Loss: {valid_loss:.3f} |  Val. Acc: {valid_acc * 100:.2f}%')
-
-
-class ConvertDataset(Dataset):
-    """
-    Create an instances of pytorch Dataset from lists.
-    """
-
-    def __init__(self, x, y):
-        # data loading
-        self.x = x
-        self.y = y
-
-    def __getitem__(self, index):
-        return {'text': self.x[index], 'tags': self.y[index]}
-
-    def __len__(self):
-        return len(self.x)
 
 
 class SequenceTaggingDataset(data.Dataset):

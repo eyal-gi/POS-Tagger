@@ -27,7 +27,7 @@ UD_TAGS = Field(unk_token=None)
 # PTB_TAGS = Field(unk_token=None)
 
 fields = (("text", TEXT), ("udtags", UD_TAGS), (None, None))
-train_data, valid_data, _ = datasets.UDPOS.splits(fields)
+train_data, valid_data, test_data = datasets.UDPOS.splits(fields)
 
 MIN_FREQ = 2
 TEXT.build_vocab(train_data,
@@ -42,8 +42,8 @@ BATCH_SIZE = 128
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-train_iterator, valid_iterator = BucketIterator.splits(
-    (train_data, valid_data),
+train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
+    (train_data, valid_data, test_data),
     batch_size=BATCH_SIZE,
     device=device)
 
@@ -169,6 +169,8 @@ def train(model, iterator, optimizer, criterion, tag_pad_idx):
 
     model.train()
 
+    start_time = time.time()
+    batch_counter = 1
     for batch in iterator:
         text = batch.text
         tags = batch.udtags
@@ -198,6 +200,11 @@ def train(model, iterator, optimizer, criterion, tag_pad_idx):
 
         epoch_loss += loss.item()
         epoch_acc += acc.item()
+        end_time = time.time()
+        batch_mins, batch_secs = epoch_time(start_time, end_time)
+        print(f'batch Time: {batch_mins}m {batch_secs}s')
+        print(f'batch number: {batch_counter}')
+        batch_counter +=1
 
     return epoch_loss / len(iterator), epoch_acc / len(iterator)
 
