@@ -11,23 +11,14 @@ import math
 import torch
 import torch.nn as nn
 import torchtext.legacy.data
-from torchtext import data
 import torch.optim as optim
 from math import log, isfinite
 from collections import Counter
-import sys
-import os
 import time
-import platform
-import nltk
 import random
-import pandas as pd
 import numpy as np
-import matplotlib as plt
-import seaborn as sns
-import BiLSTM
+import LSTM
 from torchtext.legacy.data import Field, BucketIterator
-from torchtext.legacy import datasets
 
 # With this line you don't need to worry about the HW  -- GPU or CPU
 # GPU cuda cores will be used if available
@@ -81,12 +72,6 @@ def load_annotated_corpus(filename):
 
 
 # ===========================================
-#       Load data
-# ===========================================
-train_dataset = load_annotated_corpus('en-ud-train.upos.tsv')
-test_dataset = load_annotated_corpus('en-ud-dev.upos.tsv')
-
-# ===========================================
 # ------------------------------------------
 # ===========================================
 
@@ -126,7 +111,6 @@ def learn_params(tagged_sentences):
     global VOCAB
     global TAGS
 
-    # todo: lower case the words?
     train_tagged_words = [tup for sent in tagged_sentences for tup in sent]
     tags = {tag for word, tag in train_tagged_words}
     vocab = {word for word, tag in train_tagged_words}
@@ -158,7 +142,6 @@ def learn_params(tagged_sentences):
                 transitionCounts[tup] = 1
 
     # smooth emissionCounts
-    # todo: consider removing this smoothing
     # for w in vocab:
     for t in tags:
         tup = (UNK, t)
@@ -233,7 +216,9 @@ def hmm_tag_sentence(sentence, A, B):
     """
 
     tagged_sentence = []
+    # find best sequence with viterbi algorithm
     last_item = viterbi(sentence, A, B)
+    # recursively retrace the pos tagging
     pos_list = retrace(last_item)
 
     for word, tag in zip(sentence, pos_list):
@@ -273,6 +258,7 @@ def viterbi(sentence, A, B):
     first column = P(state|<start>)*P(word|state)
     loop through all the words and all the states
     """
+    # dynamic programing history matrix
     q_matrix = []
 
     # for every word in the sentence
@@ -443,6 +429,12 @@ def initialize_rnn_model(params_d):
         #Hint: you may consider adding the embeddings and the vocabulary
         #to the returned dict
     """
+    use_seed()
+    input_rep = params_d['input_rep']
+
+    if params_d['output_dimension'] == 17:
+        print('I assumed the input to be 18 (17 tags+ 1unk), please add +1 dim for unk :)')
+
     # ## model variables
     DROPOUT = 0.25
     HIDDEN_DIM = 128
@@ -450,14 +442,14 @@ def initialize_rnn_model(params_d):
     # ## load and prepare train data
     train_set = load_annotated_corpus(params_d['data_fn'])
     x_train, y_train = _prepare_data(train_set)
-    TEXT = Field(lower=True)
+    TEXT = Field()
     UD_TAGS = Field(unk_token=None)
 
     # ## build words and tags vocabularies
     TEXT.build_vocab(x_train,
                      min_freq=params_d['min_frequency'],
-                     vectors=params_d['pretrained_embeddings_fn'],  # todo: change this, oren will send .txt
-                     unk_init=torch.Tensor.normal_,
+                     # unk_init=torch.Tensor.normal_,
+                     # vectors=params_d['pretrained_embeddings_fn'],
                      max_size=None if params_d['max_vocab_size'] == -1 else params_d['max_vocab_size'])
 
     UD_TAGS.build_vocab(y_train)
@@ -467,23 +459,25 @@ def initialize_rnn_model(params_d):
     PAD_IDX = TEXT.vocab.stoi[TEXT.pad_token]
 
     # ## initiate a model
-    lstm_model = BiLSTM.LSTM(input_dim=INPUT_DIM,
+    lstm_model = LSTM.BiLSTM(input_dim=INPUT_DIM,
                              embedding_dim=params_d['embedding_dimension'],
                              hidden_dim=HIDDEN_DIM,
                              output_dim=params_d['output_dimension'],
                              n_layers=params_d['num_of_layers'],
                              dropout=DROPOUT,
+                             input_rep=input_rep,
                              pad_idx=PAD_IDX)
 
     lstm_model.apply(_init_weights)
 
-    pretrained_embeddings = TEXT.vocab.vectors
+    # pretrained_embeddings = TEXT.vocab.vectors
+    pretrained_embeddings = load_pretrained_embeddings(params_d['pretrained_embeddings_fn'], TEXT.vocab.itos)
     lstm_model.embedding.weight.data.copy_(pretrained_embeddings)
     # set pad tag embedding to 0
     lstm_model.embedding.weight.data[PAD_IDX] = torch.zeros(params_d['embedding_dimension'])
 
     model = {'lstm': lstm_model,
-             'input_rep': params_d['input_rep'],
+             'input_rep': input_rep,
              'TEXT': TEXT,
              'TAGS': UD_TAGS
              }
@@ -526,11 +520,14 @@ def load_pretrained_embeddings(path, vocab=None):
         vocab (list): a list of words to have embeddings for. Defaults to None.
 
     """
-    # TODO
+    # make embeddings
+    embeddings = torchtext.vocab.Vectors(path)
+    if vocab is None:
+        vectors = embeddings.vectors
+    else:
+        # make embedding vectors only for the vocabulary
+        vectors = embeddings.get_vecs_by_tokens(vocab)
     return vectors
-
-
-
 
 
 def train_rnn(model, train_data, val_data=None):
@@ -563,40 +560,69 @@ def train_rnn(model, train_data, val_data=None):
 
     # ## split the data to sentences and tags
     x_train, y_train = _prepare_data(train_data)
-    # ## define torchtext fields
-    fields = (("text", TEXT), ("udtags", UD_TAGS))
-    # push the data into a torchtext type of dataset
-    train_torchtext_dataset = BiLSTM.SequenceTaggingDataset([x_train, y_train], fields=fields)
-    # ## create data iterator
-    train_iterator = BucketIterator(
-        train_torchtext_dataset,
-        batch_size=BATCH_SIZE,
-        device=device,
-        # Function to use for sorting examples.
-        sort_key=lambda x: len(x.text),
-        # Repeat the iterator for multiple epochs.
-        # repeat=True,
-        # Sort all examples in data using `sort_key`.
-        sort=False,
-        # Shuffle data on each epoch run.
-        shuffle=True,
-        # Use `sort_key` to sort examples in each batch.
-        sort_within_batch=True
-    )
+    if input_rep == 0:
+        # ## define torchtext fields
+        fields = (("text", TEXT), ("udtags", UD_TAGS))
+        # push the data into a torchtext type of dataset
+        train_torchtext_dataset = LSTM.SequenceTaggingDataset([x_train, y_train], fields=fields)
+        # ## create data iterator
+        train_iterator = BucketIterator(
+            train_torchtext_dataset,
+            batch_size=BATCH_SIZE,
+            device=device,
+            # Function to use for sorting examples.
+            sort_key=lambda x: len(x.text),
+            # Sort all examples in data using `sort_key`.
+            sort=False,
+            # Shuffle data on each epoch run.
+            shuffle=True,
+            # Use `sort_key` to sort examples in each batch.
+            sort_within_batch=True
+        )
 
-    # ## if validation data was sent, do the same for val_data
-    if val_data is not None:
-        x_val, y_val = _prepare_data(val_data)
-        val_torchtext_dataset = BiLSTM.SequenceTaggingDataset([x_val, y_val], fields=fields)
-        val_iterator = BucketIterator(
-            val_torchtext_dataset,
+        # ## if validation data was sent, do the same for val_data
+        if val_data is not None:
+            x_val, y_val = _prepare_data(val_data)
+            val_torchtext_dataset = LSTM.SequenceTaggingDataset([x_val, y_val], fields=fields)
+            val_iterator = BucketIterator(
+                val_torchtext_dataset,
+                batch_size=BATCH_SIZE,
+                device=device,
+                sort_key=lambda x: len(x.text),
+                sort=False,
+                sort_within_batch=True
+            )
+
+    else:
+        f_train, _ = _extract_words_features(x_train)
+        FEATURES = Field(unk_token=None)
+        FEATURES.build_vocab(f_train)
+        lstm_model.set_features_field(FEATURES)
+        fields = (("text", TEXT), ("udtags", UD_TAGS), ('features', FEATURES))
+        train_torchtext_dataset = LSTM.SequenceTaggingDataset([x_train, y_train, f_train], fields=fields)
+        train_iterator = BucketIterator(
+            train_torchtext_dataset,
             batch_size=BATCH_SIZE,
             device=device,
             sort_key=lambda x: len(x.text),
             sort=False,
+            shuffle=True,
             sort_within_batch=True
         )
 
+        # ## if validation data was sent, do the same for val_data
+        if val_data is not None:
+            x_val, y_val = _prepare_data(val_data)
+            f_val = _extract_words_features(x_val)
+            val_torchtext_dataset = LSTM.SequenceTaggingDataset([x_val, y_val, f_val], fields=fields)
+            val_iterator = BucketIterator(
+                val_torchtext_dataset,
+                batch_size=BATCH_SIZE,
+                device=device,
+                sort_key=lambda x: len(x.text),
+                sort=False,
+                sort_within_batch=True
+            )
 
     optimizer = optim.Adam(lstm_model.parameters())
     TAG_PAD_IDX = UD_TAGS.vocab.stoi[UD_TAGS.pad_token]
@@ -607,16 +633,12 @@ def train_rnn(model, train_data, val_data=None):
     lstm_model = lstm_model.to(device)
     criterion = criterion.to(device)
 
-    N_EPOCHS = 1
     N_EPOCHS = 17
 
     if val_data is None:
-        model_fit(lstm_model, train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS)
-        lstm_model.fit(train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS)
+        _model_fit(lstm_model, train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS)
     else:
-        model_fit(lstm_model, train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS, val_iterator)
-        lstm_model.fit(train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS, val_iterator)
-
+        _model_fit(lstm_model, train_iterator, optimizer, criterion, TAG_PAD_IDX, N_EPOCHS, val_iterator)
 
 
 def rnn_tag_sentence(sentence, model):
@@ -657,7 +679,11 @@ def rnn_tag_sentence(sentence, model):
     token_tensor = token_tensor.unsqueeze(-1).to(device)
 
     # ## feed the tensor into the model
-    predictions = lstm_model(token_tensor)
+    if input_rep == 0:
+        predictions = lstm_model(token_tensor)
+    else:
+        _, tensor_features = _extract_words_features(tokens)
+        predictions = lstm_model(token_tensor, tensor_features)
     # ## get the predictions over the sentence
     top_predictions = predictions.argmax(-1)
     # ## convert the predictions into readable tags
@@ -678,9 +704,18 @@ def get_best_performing_model_params():
         a model and train a model by calling
                initialize_rnn_model() and train_lstm()
     """
-    # TODO complete the code
+    model_params = {'max_vocab_size': -1,
+                    'min_frequency': 2,
+                    'input_rep': 1,
+                    'embedding_dimension': 100,
+                    'num_of_layers': 2,
+                    'output_dimension': 18,
+                    'pretrained_embeddings_fn': 'glove.6B.100d.txt',
+                    'data_fn': 'en-ud-train.upos.tsv'
+                    }
 
     return model_params
+
 
 # ===========================================================
 #       LSTM functions
@@ -704,12 +739,202 @@ def _prepare_data(dataset):
 
     return x_data, labels
 
+
 def _init_weights(m):
     for name, param in m.named_parameters():
         nn.init.normal_(param.data, mean=0, std=0.1)
 
 
+def _epoch_time(start_time, end_time):
+    elapsed_time = end_time - start_time
+    elapsed_mins = int(elapsed_time / 60)
+    elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
+    return elapsed_mins, elapsed_secs
 
+
+def _categorical_accuracy(preds, y, tag_pad_idx):
+    """
+    Returns accuracy per batch, i.e. if you get 8/10 right, this returns 0.8, NOT 8
+    """
+    max_preds = preds.argmax(dim=1, keepdim=True)  # get the index of the max probability
+    non_pad_elements = (y != tag_pad_idx).nonzero()
+    correct = max_preds[non_pad_elements].squeeze(1).eq(y[non_pad_elements])
+    return correct.sum() / y[non_pad_elements].shape[0]
+
+
+def _extract_words_features(sentences):
+    """
+    Returns a list of lists where every list is a list of size 3 which represent whether each word is lower-case,
+    upper-case, or starts with a capital letter.
+    :param sentences:
+    :return: list.
+    """
+    features = []
+    tensor_row = []
+    lower = [1, 0, 0]
+    upper = [0, 1, 0]
+    leading = [0, 0, 1]
+    other = [1, 1, 1]
+
+    if type(sentences[0]) != list:
+        for word in sentences:
+            if word.islower():
+                features.append('lower')
+                tensor_row.append([lower])
+            elif word.isupper():
+                features.append('upper')
+                tensor_row.append([upper])
+            elif word[0].isupper():
+                features.append('leading')
+                tensor_row.append([leading])
+            else:
+                features.append('other')
+                tensor_row.append([other])
+
+    else:
+        for sent in sentences:
+            sent_features = []
+            for word in sent:
+                if word.islower():
+                    sent_features.append('lower')
+                elif word.isupper():
+                    sent_features.append('upper')
+                elif word[0].isupper():
+                    sent_features.append('leading')
+                else:
+                    sent_features.append('other')
+            features.append(sent_features)
+
+    return features, torch.Tensor(tensor_row)
+
+
+def _model_fit(model, train_iterator, optimizer, criterion, TAG_PAD_IDX, n_epochs=8, valid_iterator=None, verbose=1):
+    """
+    Fits the model to a given train set. Can be fitted with validation set as well to see accuracy and loss
+    on validation throughout the training.
+    :param model: a model object of type torch.NN
+    :param train_iterator: of type BucketIterator. The train data (with labels)
+    :param optimizer: The optimizer to use (from pytorch functions)
+    :param criterion: The models criterion
+    :param TAG_PAD_IDX: The index of padding
+    :param n_epochs: Number of epochs to train on
+    :param valid_iterator: of type BucketIterator. Validation data (with labels)
+    :param verbose: Print data during training.
+    :return: history. a dictionary of the models accuracy and loss of both train and validation data
+            during the data fit.
+    """
+    history = {'accuracy': [], 'val_accuracy': [],
+               'loss': [], 'val_loss': []
+               }
+
+    for epoch in range(n_epochs):
+        start_time = time.time()
+
+        train_iterator.create_batches()
+
+        train_loss, train_acc = _model_train(model, train_iterator, optimizer, criterion, TAG_PAD_IDX)
+        history['accuracy'].append(train_acc)
+        history['loss'].append(train_loss)
+
+        if valid_iterator is not None:
+            valid_loss, valid_acc = _model_evaluate(model, valid_iterator, criterion, TAG_PAD_IDX)
+            history['val_accuracy'].append(valid_acc)
+            history['val_loss'].append(valid_loss)
+
+        end_time = time.time()
+
+        epoch_mins, epoch_secs = _epoch_time(start_time, end_time)
+
+        if verbose == 1:
+            print(f'Epoch: {epoch + 1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s')
+            print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc * 100:.2f}%')
+            if valid_iterator is not None:
+                print(f'\t Val. Loss: {valid_loss:.3f} |  Val. Acc: {valid_acc * 100:.2f}%')
+
+
+def _model_train(model, iterator, optimizer, criterion, tag_pad_idx):
+    """
+    Trains the model on the train set and returns the epoch loss and acc
+    :param model: a model object of type torch.NN
+    :param iterator: of type BucketIterator. The train data
+    :param optimizer: The optimizer to use (from pytorch functions)
+    :param criterion: The models criterion
+    :param tag_pad_idx: The index of padding
+    :return: epoch loss, epoch acc
+    """
+
+    epoch_loss = 0
+    epoch_acc = 0
+
+    model.train()
+
+    # for sample_id, batch in enumerate(iterator.batches):
+    for batch in iterator:
+        text = batch.text
+        tags = batch.udtags
+
+        optimizer.zero_grad()
+
+        # text = [sent len, batch size]
+        if model.get_input_rep() == 0:
+            predictions = model(text)
+        else:
+            features = batch.features
+            predictions = model(text, features)
+
+        # predictions = [sent len, batch size, output dim]
+        # tags = [sent len, batch size]
+        predictions = predictions.view(-1, predictions.shape[-1])
+        tags = tags.view(-1)
+
+        # predictions = [sent len * batch size, output dim]
+        # tags = [sent len * batch size]
+        loss = criterion(predictions, tags)
+
+        acc = _categorical_accuracy(predictions, tags, tag_pad_idx)
+
+        loss.backward()
+
+        optimizer.step()
+
+        epoch_loss += loss.item()
+        epoch_acc += acc.item()
+
+    return epoch_loss / len(iterator), epoch_acc / len(iterator)
+
+
+def _model_evaluate(model, iterator, criterion, tag_pad_idx):
+    """
+    Evaluate the model on a test/validation set and returns the epoch loss and acc
+    :param model: a model object of type torch.NN
+    :param iterator: of type BucketIterator. The evaluated data (with labels)
+    :param criterion: The models criterion
+    :param tag_pad_idx: The index of padding
+    :return: epoch loss, epoch acc
+    """
+    epoch_loss = 0
+    epoch_acc = 0
+
+    model.eval()
+
+    with torch.no_grad():
+        for batch in iterator:
+            text = batch.text
+            tags = batch.udtags
+
+            predictions = model(text)
+
+            predictions = predictions.view(-1, predictions.shape[-1])
+            tags = tags.view(-1)
+
+            loss = criterion(predictions, tags)
+
+            acc = _categorical_accuracy(predictions, tags, tag_pad_idx)
+
+            epoch_loss += loss.item()
+            epoch_acc += acc.item()
+
+    return epoch_loss / len(iterator), epoch_acc / len(iterator)
 
 
 # ===========================================================
@@ -749,13 +974,13 @@ def tag_sentence(sentence, model):
         list: list of pairs
     """
     if list(model.keys())[0] == 'baseline':
-        return baseline_tag_sentence(sentence, list(model.values())[0], list(model.values())[1])
+        return baseline_tag_sentence(sentence, list(model.values())[0][0], list(model.values())[0][1])
     if list(model.keys())[0] == 'hmm':
-        return hmm_tag_sentence(sentence, list(model.values())[0], list(model.values())[1])
+        return hmm_tag_sentence(sentence, list(model.values())[0][0], list(model.values())[0][1])
     if list(model.keys())[0] == 'blstm':
-        return rnn_tag_sentence(sentence, list(model.values())[0])
+        return rnn_tag_sentence(sentence, list(model.values())[0][0])
     if list(model.keys())[0] == 'cblstm':
-        return rnn_tag_sentence(sentence, list(model.values())[0])
+        return rnn_tag_sentence(sentence, list(model.values())[0][0])
 
 
 def count_correct(gold_sentence, pred_sentence):

@@ -3,21 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torchtext.legacy.data import Field, LabelField, BucketIterator, TabularDataset
 from torchtext.legacy import datasets
-import spacy
-import numpy as np
 import time
-import random
-from torch.utils.data import DataLoader, Dataset
-from torch.nn.utils.rnn import pad_sequence
-from sklearn.model_selection import train_test_split, StratifiedKFold
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score, confusion_matrix, \
-    classification_report
-import string
-import pickle
-from itertools import product
-import matplotlib.pyplot as plt
-import pandas as pd
-# from tabulate import tabulate
 
 import tagger
 
