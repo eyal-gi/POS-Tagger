@@ -42,7 +42,7 @@ def who_am_i():  # this is not a class method
         Make sure you return your own info!
     """
     # TODO edit the dictionary to have your own details
-    return {'name': 'Eyal Ginosar', 'id': '307830901', 'email': 'eyalgi@post.bgu.ac.il'}
+    return {'name': 'Eyal Ginosar', 'id': '', 'email': ''}
 
 
 def read_annotated_sentence(f):
